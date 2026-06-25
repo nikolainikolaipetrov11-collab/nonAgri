@@ -8,6 +8,7 @@
 """
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+import sys
 import pandas as pd
 import numpy as np
 import geopandas as gpd
@@ -15,6 +16,10 @@ import xgboost as xgb
 import shap
 import logging
 from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from project_config import CONFIG
+
 from dataset import PhenologyMAEDataset
 
 
@@ -23,13 +28,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # ==========================================
 # 统一配置
 # ==========================================
-NDVI_IDX = 0
-GLCM_IDX = 43
+NDVI_IDX = CONFIG.get("gmm", "ndvi_idx")
+GLCM_IDX = CONFIG.get("gmm", "glcm_idx")
 LABEL_MAPPING = {0: "经济作物/其他", 1: "果树与林地", 2: "撂荒与裸地"}
 
 
 # 配置抽样最大数量
-ACTIVE_LEARNING_BATCH_SIZE = 20
+ACTIVE_LEARNING_BATCH_SIZE = CONFIG.get("active_learning", "batch_size")
+CONFIDENCE_FLOOR = CONFIG.get("active_learning", "confidence_floor")
 
 def build_interpretable_features(real_physics_matrix):
     """构建 18 维具有高度农学可解释性的特征矩阵"""
@@ -72,14 +78,14 @@ def generate_shap_human_reason(shap_values, feature_names, predicted_class, inst
 def run_trustworthy_active_learning():
     logging.info("🚀 启动 XGBoost 定向抽样闭环与单体归因引擎...")
 
-    DATA_ROOT = Path("E:/test")
-    GMM_CSV = DATA_ROOT / "date/out/split_reports/03_Non_Grain_GMM_Final_Semantic.csv"
-    ORIGINAL_SHP = DATA_ROOT / "shp/huocheng_dk_260605.shp"
+    DATA_ROOT = CONFIG.root
+    GMM_CSV = CONFIG.split_report("03_Non_Grain_GMM_Final_Semantic.csv")
+    ORIGINAL_SHP = CONFIG.parcel_shp
 
-    GOLDEN_SHP = DATA_ROOT / "shp/human_check/true_label.shp"
+    GOLDEN_SHP = CONFIG.human_check_dir / "true_label.shp"
 
-    FINAL_CSV = DATA_ROOT / "date/out/split_reports/04_Final_Trustworthy_NonGrain.csv"
-    NEXT_BATCH_SHP = DATA_ROOT / "shp/human_check/Next_Batch_To_Check.shp"
+    FINAL_CSV = CONFIG.split_report("04_Final_Trustworthy_NonGrain.csv")
+    NEXT_BATCH_SHP = CONFIG.human_check_dir / "Next_Batch_To_Check.shp"
 
     NEXT_BATCH_SHP.parent.mkdir(parents=True, exist_ok=True)
 
@@ -130,7 +136,7 @@ def run_trustworthy_active_learning():
     # ==========================================
     # 2. 提取物理特征并训练微调
     # ==========================================
-    full_dataset = PhenologyMAEDataset(data_root=str(DATA_ROOT / "date/out"), mode='inference', mask_ratio=0.0)
+    full_dataset = PhenologyMAEDataset(data_root=str(CONFIG.date_out_dir), mode='inference', mask_ratio=0.0)
     meta_df = full_dataset.meta_data
     wide_id_col = full_dataset.wide_id_col
 
@@ -154,7 +160,7 @@ def run_trustworthy_active_learning():
     # 3. 全域靶点推演与单体 SHAP 解释
     # ==========================================
     logging.info("⚖️ 正在对全县异常靶点进行推演与 SHAP 局部归因...")
-    anomaly_df = pd.read_csv(DATA_ROOT / "date/out/split_reports/02_Non_Grain_Anomalies.csv", dtype={'parcel_id': str})
+    anomaly_df = pd.read_csv(CONFIG.split_report("02_Non_Grain_Anomalies.csv"), dtype={'parcel_id': str})
     anomaly_df['parcel_id'] = anomaly_df['parcel_id'].str.replace(r'\.0$', '', regex=True).str.strip()
 
     infer_indices = meta_df.index[meta_df[wide_id_col].astype(str).str.replace(r'\.0$', '', regex=True).isin(set(anomaly_df['parcel_id']))].tolist()
@@ -175,7 +181,7 @@ def run_trustworthy_active_learning():
         sorted_p = np.sort(probs[i])
         margins.append(sorted_p[-1] - sorted_p[-2])
 
-        if max_probs[i] < 0.60:
+        if max_probs[i] < CONFIDENCE_FLOOR:
             pred_classes[i] = 0
             max_probs[i] = probs[i, 0]
             reasons.append("模型置信度偏低，执行安全兜底")

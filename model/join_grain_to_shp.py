@@ -9,6 +9,10 @@ import geopandas as gpd
 import logging
 from pathlib import Path
 
+import sys
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from project_config import CONFIG
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def join_csv_to_shapefile():
@@ -17,11 +21,10 @@ def join_csv_to_shapefile():
     # ==========================================
     # 1. 路径路由配置
     # ==========================================
-    DATA_ROOT = Path("E:/test")
-    CSV_PATH = DATA_ROOT / "date/out/split_reports/01_Safe_Grain_Parcels.csv"
-    ORIGINAL_SHP = DATA_ROOT / "shp/huocheng_dk_260605.shp"
+    CSV_PATH = CONFIG.split_report("01_Safe_Grain_Parcels.csv")
+    ORIGINAL_SHP = CONFIG.parcel_shp
 
-    OUTPUT_DIR = DATA_ROOT / "shp/safe_grain"
+    OUTPUT_DIR = CONFIG.safe_grain_dir
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_SHP = OUTPUT_DIR / "Safe_Grain_Parcels.shp"
 

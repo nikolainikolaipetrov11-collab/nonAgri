@@ -16,6 +16,10 @@ import warnings
 import gc
 import logging
 from pathlib import Path
+
+import sys
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from project_config import CONFIG
 warnings.filterwarnings("ignore")
 
 # ==========================================
@@ -26,18 +30,18 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 warnings.filterwarnings("ignore")
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-PROCESS_DIR = str(BASE_DIR / 'date' / 'Process')
-OUT_DIR = str(BASE_DIR / 'date' / 'out_nonAgri')
-SHP_PATH = str(BASE_DIR / 'shp' / 'huocheng_dk_260605.shp')
-RAW_DIR = str(BASE_DIR / 'date' / 'raw')
+PROCESS_DIR = str(CONFIG.date_process_dir)
+OUT_DIR = str(CONFIG.date_out_non_agri_dir)
+SHP_PATH = str(CONFIG.parcel_shp)
+RAW_DIR = str(CONFIG.date_raw_dir)
 
 
 os.makedirs(PROCESS_DIR, exist_ok=True)
 os.makedirs(OUT_DIR, exist_ok=True)
 
-CHUNK_SIZE = 8192
-MAX_WORKERS = 4
+CHUNK_SIZE = CONFIG.get("processing", "chunk_size")
+MAX_WORKERS = CONFIG.get("processing", "max_workers")
+MOSAIC_CHUNK_SIZE = CONFIG.get("processing", "mosaic_chunk_size")
 
 
 # ==========================================
@@ -304,7 +308,7 @@ def main_pipeline():
                         logging.error(f"      [X] 解算失败: {error_msg}")
 
             logging.info(f"  [2/3] 启动内存安全型 MVC 镶嵌 (合并 {len(month_tif_list)} 景影像)...")
-            memory_safe_mosaic(month_tif_list, mosaic_tif_path, chunk_size=4096)
+            memory_safe_mosaic(month_tif_list, mosaic_tif_path, chunk_size=MOSAIC_CHUNK_SIZE)
             logging.info("      [√] 巨幅镶嵌完成！")
 
             for tif in month_tif_list:

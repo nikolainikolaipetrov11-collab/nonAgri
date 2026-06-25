@@ -5,6 +5,7 @@
 """
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+import sys
 import torch
 from torch.utils.data import DataLoader
 import numpy as np
@@ -15,6 +16,9 @@ from tqdm import tqdm
 from scipy.stats import gaussian_kde
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from project_config import CONFIG
 
 from dataset import PhenologyMAEDataset
 from encoder import SerialLocalGlobalEncoder
@@ -107,17 +111,18 @@ def run_hybrid_pipeline():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logging.info(f"🚀 启动异常初筛路由引擎 (可信AI版)，计算设备: {device}")
 
-    DATA_ROOT = Path("E:/test/date/out")
-    CO_TEACHING_CKPT = Path("E:/test/model/checkpoints/co_teaching_encoder_best.pth")
+    DATA_ROOT = CONFIG.date_out_dir
+    CO_TEACHING_CKPT = CONFIG.checkpoint_dir / "co_teaching_encoder_best.pth"
 
     REPORT_DIR = DATA_ROOT / "split_reports"
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     SAFE_CSV = REPORT_DIR / "01_Safe_Grain_Parcels.csv"
     ANOMALY_CSV = REPORT_DIR / "02_Non_Grain_Anomalies.csv"
-    OUTPUT_IMG = Path("E:/test/model/evaluation_results/MSE_Distribution.png")
+    OUTPUT_IMG = CONFIG.evaluation_dir / "MSE_Distribution.png"
+    OUTPUT_IMG.parent.mkdir(parents=True, exist_ok=True)
 
     full_dataset = PhenologyMAEDataset(data_root=str(DATA_ROOT), mode='inference', mask_ratio=0.0)
-    full_loader = DataLoader(full_dataset, batch_size=256, shuffle=False, num_workers=0)
+    full_loader = DataLoader(full_dataset, batch_size=CONFIG.get("inference", "batch_size"), shuffle=False, num_workers=0)
 
     encoder = SerialLocalGlobalEncoder(input_dim=47, time_steps=7, d_model=128, nhead=4, num_layers=3).to(device)
     decoder = ConditionalTwinDecoder(embed_dim=128, out_dim=47, max_cluster_id=10).to(device)
@@ -135,8 +140,8 @@ def run_hybrid_pipeline():
     all_parcel_ids = []
     all_mse_errors = []
 
-    TEXTURE_START_IDX = 43
-    TEXTURE_END_IDX = 46
+    TEXTURE_START_IDX = CONFIG.get("inference", "texture_start_idx")
+    TEXTURE_END_IDX = CONFIG.get("inference", "texture_end_idx")
 
     logging.info("⚖️ 正在进行全域扫描，计算纯正的 MAE 重构误差 (MSE)...")
     with torch.no_grad():

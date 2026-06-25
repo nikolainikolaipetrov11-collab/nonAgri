@@ -5,6 +5,10 @@ import geopandas as gpd  # 工业级空间矢量处理核心库
 import logging
 from pathlib import Path
 
+import sys
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from project_config import CONFIG
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
@@ -14,10 +18,10 @@ def join_nonagri_csv_to_shapefile():
     # ==========================================
     # 1. 路径路由配置
     # ==========================================
-    CSV_PATH = Path("E:/test/date/out/split_reports/00_Pure_Non_Agri.csv")
-    ORIGINAL_SHP = Path("E:/test/shp/Agri_Parcels.shp")
+    CSV_PATH = CONFIG.split_report("00_Pure_Non_Agri.csv")
+    ORIGINAL_SHP = CONFIG.agri_parcels_shp
 
-    OUTPUT_DIR = Path("E:/test/shp/non_agri")
+    OUTPUT_DIR = CONFIG.non_agri_dir
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_SHP = OUTPUT_DIR / "00_Pure_Non_Agri.shp"
 

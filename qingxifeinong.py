@@ -4,11 +4,12 @@
 import pandas as pd
 from pathlib import Path
 
-DATA_ROOT = Path("E:/test")
-NON_AGRI_PATH = DATA_ROOT / "date/out/non_agri/非农.csv"
+from project_config import CONFIG
+
+NON_AGRI_PATH = CONFIG.date_out("non_agri", "非农.csv")
 TARGET_FILES = {
-    "01": DATA_ROOT / "date/out/split_reports/01_Safe_Grain_Parcels.csv",
-    "04": DATA_ROOT / "date/out/split_reports/04_Final_Trustworthy_NonGrain.csv",
+    "01": CONFIG.split_report("01_Safe_Grain_Parcels.csv"),
+    "04": CONFIG.split_report("04_Final_Trustworthy_NonGrain.csv"),
 }
 
 # 1. 读取非农剔除名单

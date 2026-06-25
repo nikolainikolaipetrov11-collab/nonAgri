@@ -5,6 +5,7 @@
 """
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+import sys
 import torch
 
 from torch.utils.data import DataLoader, Subset
@@ -12,6 +13,9 @@ import pandas as pd
 import logging
 from pathlib import Path
 from tqdm import tqdm
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from project_config import CONFIG
 
 from dataset import PhenologyMAEDataset
 from encoder import SerialLocalGlobalEncoder
@@ -25,14 +29,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # ==========================================
 class CoTeachingConfig:
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    MASK_RATIO = 0.25         # MAE 遮挡率
-    NOISE_RATE = 0.35         # 预估伪标签最大噪音率
-    EPOCH_GRADUAL = 30        # 达到最大遗忘率的预热 Epoch
-    NUM_EPOCHS = 100
-    BATCH_SIZE = 256
-    LR = 1e-4
-    DATA_ROOT = Path("E:/test/date/out")
-    CHECKPOINT_DIR = Path("E:/test/model/checkpoints")
+    MASK_RATIO = CONFIG.get("training", "mask_ratio")
+    NOISE_RATE = CONFIG.get("training", "noise_rate")
+    EPOCH_GRADUAL = CONFIG.get("training", "epoch_gradual")
+    NUM_EPOCHS = CONFIG.get("training", "num_epochs")
+    BATCH_SIZE = CONFIG.get("training", "batch_size")
+    LR = CONFIG.get("training", "learning_rate")
+    DATA_ROOT = CONFIG.date_out_dir
+    CHECKPOINT_DIR = CONFIG.checkpoint_dir
 
 # ==========================================
 # 抗噪交叉教学损失函数

@@ -2,16 +2,15 @@ import os
 import geopandas as gpd
 import warnings
 
+from project_config import CONFIG
+
 warnings.filterwarnings("ignore")
 
 # ==========================================
 # 0. 基础路径配置
 # ==========================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SHP_DIR = os.path.join(BASE_DIR, 'shp')
-
-INPUT_SHP = os.path.join(SHP_DIR, '霍城县地块.shp')
-OUTPUT_SHP = os.path.join(SHP_DIR, 'Agri_Parcels.shp')
+INPUT_SHP = CONFIG.raw_landuse_shp
+OUTPUT_SHP = CONFIG.agri_parcels_shp
 
 
 def preprocess_shapefile():

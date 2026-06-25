@@ -17,22 +17,24 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import warnings
 import gc
 
+from project_config import CONFIG
+
 warnings.filterwarnings("ignore")
 
 # ==========================================
 # 0. 基础路径与性能配置
 # ==========================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-RAW_DIR = os.path.join(BASE_DIR, 'date', 'raw')
-PROCESS_DIR = os.path.join(BASE_DIR, 'date', 'process')
-OUT_DIR = os.path.join(BASE_DIR, 'date', 'out')
-SHP_PATH = os.path.join(BASE_DIR, 'shp', 'huocheng_dk_260605.shp')
+RAW_DIR = str(CONFIG.date_raw_dir)
+PROCESS_DIR = str(CONFIG.date_process_dir)
+OUT_DIR = str(CONFIG.date_out_dir)
+SHP_PATH = str(CONFIG.parcel_shp)
 
 os.makedirs(PROCESS_DIR, exist_ok=True)
 os.makedirs(OUT_DIR, exist_ok=True)
 
-CHUNK_SIZE = 8192
-MAX_WORKERS = 4
+CHUNK_SIZE = CONFIG.get("processing", "chunk_size")
+MAX_WORKERS = CONFIG.get("processing", "max_workers")
+MOSAIC_CHUNK_SIZE = CONFIG.get("processing", "mosaic_chunk_size")
 
 
 # ==========================================
@@ -270,7 +272,7 @@ def main_pipeline():
                         print(f"      [X] 解算失败: {error_msg}")
 
             print(f"  [2/3] 启动内存安全型 MVC 镶嵌 (合并 {len(month_tif_list)} 景影像)...")
-            memory_safe_mosaic(month_tif_list, mosaic_tif_path, chunk_size=4096)
+            memory_safe_mosaic(month_tif_list, mosaic_tif_path, chunk_size=MOSAIC_CHUNK_SIZE)
             print(f"      [√] 巨幅镶嵌完成！")
 
             # 阅后即焚：清理临时文件

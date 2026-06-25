@@ -11,13 +11,14 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import warnings
 
+from project_config import CONFIG
+
 warnings.filterwarnings("ignore")
 
 # ==========================================
 # 0. 基础路径与专属收纳仓配置
 # ==========================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-OUT_DIR = os.path.join(BASE_DIR, 'date', 'out')
+OUT_DIR = str(CONFIG.date_out_dir)
 INPUT_CSV = os.path.join(OUT_DIR, 'Dynamic_TimeSeries_WideTable.csv')
 
 # 建立多维聚类专属输出收纳仓

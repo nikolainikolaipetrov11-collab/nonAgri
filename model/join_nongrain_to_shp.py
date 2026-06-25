@@ -8,6 +8,10 @@ import geopandas as gpd
 import logging
 from pathlib import Path
 
+import sys
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from project_config import CONFIG
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def join_nongrain_csv_to_shapefile():
@@ -16,11 +20,10 @@ def join_nongrain_csv_to_shapefile():
     # ==========================================
     # 1. 路径路由配置
     # ==========================================
-    DATA_ROOT = Path("E:/test")
-    CSV_PATH = DATA_ROOT / "date/out/split_reports/03_Non_Grain_GMM_Final_Semantic.csv"
-    ORIGINAL_SHP = DATA_ROOT / "shp/huocheng_dk_260605.shp"
+    CSV_PATH = CONFIG.split_report("03_Non_Grain_GMM_Final_Semantic.csv")
+    ORIGINAL_SHP = CONFIG.parcel_shp
 
-    OUTPUT_DIR = DATA_ROOT / "shp/non_grain"
+    OUTPUT_DIR = CONFIG.non_grain_dir
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_SHP = OUTPUT_DIR / "Non_Grain_Anomalies.shp"
 

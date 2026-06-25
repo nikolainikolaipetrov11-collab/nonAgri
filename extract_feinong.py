@@ -5,11 +5,12 @@
 import pandas as pd
 from pathlib import Path
 
+from project_config import CONFIG
+
 
 def extract_non_agri_exclude():
-    DATA_ROOT = Path("E:/test")
-    NON_AGRI_PATH = DATA_ROOT / "date/out/non_agri/非农.csv"
-    OUTPUT_PATH = DATA_ROOT / "date/out/non_agri/非农_剔除列表.csv"
+    NON_AGRI_PATH = CONFIG.date_out("non_agri", "非农.csv")
+    OUTPUT_PATH = CONFIG.date_out("non_agri", "非农_剔除列表.csv")
 
     # 读取原始非农 CSV，锁定 parcel_id 为字符串
     df = pd.read_csv(NON_AGRI_PATH, dtype={'parcel_id': str})

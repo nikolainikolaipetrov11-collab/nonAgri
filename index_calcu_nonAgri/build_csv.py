@@ -10,14 +10,17 @@ import warnings
 import logging
 from pathlib import Path
 
+import sys
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from project_config import CONFIG
+
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-OUT_DIR = str(BASE_DIR / 'date' / 'out_nonAgri')
+OUT_DIR = str(CONFIG.date_out_non_agri_dir)
 
 
-FULL_MONTHS = [4, 5, 6, 7, 8, 9, 10]
+FULL_MONTHS = CONFIG.get("processing", "full_months")
 
 # ==========================================
 # 核心特征罗盘 (38维)

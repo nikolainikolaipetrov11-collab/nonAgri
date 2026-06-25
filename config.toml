@@ -1,0 +1,43 @@
+[paths]
+date_raw_dir = "date/raw"
+date_process_dir = "date/process"
+date_out_dir = "date/out"
+date_out_non_agri_dir = "date/out_nonAgri"
+parcel_shp = "shp/huocheng_dk_260605.shp"
+agri_parcels_shp = "shp/Agri_Parcels.shp"
+raw_landuse_shp = "shp/霍城县地块.shp"
+checkpoint_dir = "model/checkpoints"
+evaluation_dir = "model/evaluation_results"
+safe_grain_dir = "shp/safe_grain"
+non_grain_dir = "shp/non_grain"
+non_agri_dir = "shp/non_agri"
+human_check_dir = "shp/human_check"
+
+[processing]
+full_months = [4, 5, 6, 7, 8, 9, 10]
+chunk_size = 8192
+mosaic_chunk_size = 4096
+max_workers = 4
+
+[training]
+mask_ratio = 0.25
+noise_rate = 0.35
+epoch_gradual = 30
+num_epochs = 100
+batch_size = 256
+learning_rate = 0.0001
+
+[inference]
+batch_size = 256
+texture_start_idx = 43
+texture_end_idx = 46
+
+[gmm]
+min_clusters = 3
+max_clusters = 8
+ndvi_idx = 0
+glcm_idx = 43
+
+[active_learning]
+batch_size = 20
+confidence_floor = 0.60

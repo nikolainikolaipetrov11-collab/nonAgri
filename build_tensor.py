@@ -8,12 +8,13 @@ import pandas as pd
 import numpy as np
 import warnings
 
+from project_config import CONFIG
+
 warnings.filterwarnings("ignore")
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-OUT_DIR = os.path.join(BASE_DIR, 'date', 'out')
+OUT_DIR = str(CONFIG.date_out_dir)
 
-FULL_MONTHS = [4, 5, 6, 7, 8, 9, 10]
+FULL_MONTHS = CONFIG.get("processing", "full_months")
 
 FEATURE_ORDER = [
     # 1. 四大植被指数 (28维)

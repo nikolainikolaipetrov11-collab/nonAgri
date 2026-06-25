@@ -6,6 +6,7 @@
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
+import sys
 import numpy as np
 import pandas as pd
 import logging
@@ -15,6 +16,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from project_config import CONFIG
 
 # 直接用 Dataset 底层接口加载数据
 from dataset import PhenologyMAEDataset
@@ -27,19 +31,20 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # ==========================================
 # 统一配置
 # ==========================================
-NDVI_IDX = 0
-GLCM_IDX = 43
-MIN_CLUSTERS = 3
-MAX_CLUSTERS = 8
+NDVI_IDX = CONFIG.get("gmm", "ndvi_idx")
+GLCM_IDX = CONFIG.get("gmm", "glcm_idx")
+MIN_CLUSTERS = CONFIG.get("gmm", "min_clusters")
+MAX_CLUSTERS = CONFIG.get("gmm", "max_clusters")
 
 def run_nongrain_physical_gmm():
     logging.info("🌌 启动阶段二：非粮靶点【宏观物理特征】直聚类引擎")
 
     # 1. 路径与目标加载
-    DATA_ROOT = Path("E:/test/date/out")
+    DATA_ROOT = CONFIG.date_out_dir
     TARGET_CSV = DATA_ROOT / "split_reports/02_Non_Grain_Anomalies.csv"
     OUTPUT_CSV = DATA_ROOT / "split_reports/03_Non_Grain_GMM_Final_Semantic.csv"
-    OUTPUT_IMG = Path("E:/test/model/evaluation_results/Non_Grain_Physical_Clustering.png")
+    OUTPUT_IMG = CONFIG.evaluation_dir / "Non_Grain_Physical_Clustering.png"
+    OUTPUT_IMG.parent.mkdir(parents=True, exist_ok=True)
 
     if not TARGET_CSV.exists(): raise FileNotFoundError("❌ 未找到非粮化清单！")
 

@@ -5,6 +5,8 @@ import pandas as pd
 import logging
 from pathlib import Path
 
+from project_config import CONFIG
+
 # 配置工业级日志打印
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -16,10 +18,10 @@ def extract_non_agri_parcels():
     # 1. 路径路由配置
     # ==========================================
     # 输入的带有非农标签的总表
-    INPUT_CSV = Path("E:/test/date/out/non_agri/parcels_growth_season_detected.csv")
+    INPUT_CSV = CONFIG.date_out("non_agri", "parcels_growth_season_detected.csv")
 
     # 提取后的输出路径
-    OUTPUT_DIR = Path("E:/test/date/out/non_agri")
+    OUTPUT_DIR = CONFIG.date_out("non_agri")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_CSV = OUTPUT_DIR / "pure_non_agri_targets.csv"
 

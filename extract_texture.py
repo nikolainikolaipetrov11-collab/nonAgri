@@ -13,14 +13,15 @@ from skimage.feature import graycomatrix, graycoprops, local_binary_pattern
 from concurrent.futures import ProcessPoolExecutor
 import warnings
 
+from project_config import CONFIG
+
 warnings.filterwarnings("ignore")
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROCESS_DIR = os.path.join(BASE_DIR, 'date', 'process')
-OUT_DIR = os.path.join(BASE_DIR, 'date', 'out')
-SHP_PATH = os.path.join(BASE_DIR, 'shp', 'huocheng_dk_260605.shp')
+PROCESS_DIR = str(CONFIG.date_process_dir)
+OUT_DIR = str(CONFIG.date_out_dir)
+SHP_PATH = str(CONFIG.parcel_shp)
 
-MAX_WORKERS = 4
+MAX_WORKERS = CONFIG.get("processing", "max_workers")
 
 
 def calculate_texture(img_2d):

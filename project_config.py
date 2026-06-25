@@ -1,3 +1,6 @@
+"""
+    统一加载配置，并把相对路径解析到项目根目录
+"""
 from __future__ import annotations
 
 import os

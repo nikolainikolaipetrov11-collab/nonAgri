@@ -107,6 +107,46 @@ def calculate_confidence_scores(mse_array, threshold):
 
     return np.round(p_anomaly, 4)
 
+def build_physical_veto_flags(raw_physical_matrix):
+    ndvi_idx = CONFIG.get("gmm", "ndvi_idx")
+    glcm_idx = CONFIG.get("gmm", "glcm_idx")
+
+    abandoned_peak_max = CONFIG.get("routing", "abandoned_peak_ndvi_max", 0.55)
+    orchard_spring_min = CONFIG.get("routing", "orchard_spring_ndvi_min", 0.18)
+    orchard_std_max = CONFIG.get("routing", "orchard_ndvi_std_max", 0.20)
+    orchard_glcm_ratio = CONFIG.get("routing", "orchard_glcm_global_ratio", 1.0)
+
+    ndvi_matrix = raw_physical_matrix[:, :, ndvi_idx]
+    glcm_matrix = raw_physical_matrix[:, :, glcm_idx]
+
+    peak_ndvi = np.max(ndvi_matrix[:, 1:6], axis=1)
+    spring_ndvi = ndvi_matrix[:, 0]
+    ndvi_std = np.std(ndvi_matrix, axis=1)
+    mean_glcm = np.mean(glcm_matrix, axis=1)
+    global_glcm_mean = np.mean(mean_glcm)
+
+    abandoned_mask = peak_ndvi < abandoned_peak_max
+    orchard_mask = (
+        (spring_ndvi >= orchard_spring_min)
+        & (ndvi_std < orchard_std_max)
+        & (mean_glcm > global_glcm_mean * orchard_glcm_ratio)
+    )
+
+    reasons = np.full(raw_physical_matrix.shape[0], "", dtype=object)
+    reasons[abandoned_mask] = "physical_abandoned_low_peak_ndvi"
+    reasons[orchard_mask] = "physical_orchard_stable_spring_texture"
+    both_mask = abandoned_mask & orchard_mask
+    reasons[both_mask] = "physical_abandoned_or_orchard"
+
+    feature_df = pd.DataFrame({
+        "Peak_NDVI": np.round(peak_ndvi, 4),
+        "Spring_NDVI": np.round(spring_ndvi, 4),
+        "NDVI_Std": np.round(ndvi_std, 4),
+        "Mean_GLCM": np.round(mean_glcm, 4),
+    })
+
+    return abandoned_mask | orchard_mask, reasons, feature_df
+
 def run_hybrid_pipeline():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logging.info(f"🚀 启动异常初筛路由引擎 (可信AI版)，计算设备: {device}")
@@ -162,6 +202,7 @@ def run_hybrid_pipeline():
             all_parcel_ids.extend(parcel_ids)
 
     mse_array = np.array(all_mse_errors)
+    raw_physical_matrix = full_dataset.get_raw_physical_features()
 
     # 1. 寻找拐点
     TEMP_THRESHOLD = auto_find_elbow_threshold(mse_array)
@@ -185,23 +226,45 @@ def run_hybrid_pipeline():
     plt.close()
 
     # 3. 纯净路由分流落盘
-    safe_grain_mask = mse_array <= TEMP_THRESHOLD
-    anomaly_mask = mse_array > TEMP_THRESHOLD
+    physical_veto_mask, physical_reasons, physical_feature_df = build_physical_veto_flags(raw_physical_matrix)
+    grain_confidence_array = np.round(1.0 - p_anomaly_array, 4)
+    safe_confidence_floor = CONFIG.get("routing", "safe_grain_confidence_floor", 0.80)
+    physical_veto_confidence = CONFIG.get("routing", "physical_veto_confidence", 0.65)
+
+    mse_anomaly_mask = mse_array > TEMP_THRESHOLD
+    low_confidence_safe_mask = (mse_array <= TEMP_THRESHOLD) & (grain_confidence_array < safe_confidence_floor)
+    safe_grain_mask = (mse_array <= TEMP_THRESHOLD) & (~physical_veto_mask) & (~low_confidence_safe_mask)
+    anomaly_mask = mse_anomaly_mask | physical_veto_mask | low_confidence_safe_mask
+
+    routing_reason = np.full(len(mse_array), "strict_safe_grain", dtype=object)
+    routing_reason[mse_anomaly_mask] = "mse_anomaly"
+    routing_reason[low_confidence_safe_mask] = "low_confidence_safe_review"
+    routing_reason[physical_veto_mask] = physical_reasons[physical_veto_mask]
+    routing_reason[mse_anomaly_mask & physical_veto_mask] = "mse_anomaly_and_physical_veto"
 
     df_all = pd.DataFrame({
         'parcel_id': all_parcel_ids,
         'MSE_Score': np.round(mse_array, 4),
-        'P_Anomaly': p_anomaly_array
+        'P_Anomaly': p_anomaly_array,
+        'Routing_Reason': routing_reason
     })
+    df_all = pd.concat([df_all, physical_feature_df], axis=1)
 
     # [安全池] 记录主粮置信度
     df_safe = df_all[safe_grain_mask].copy()
-    df_safe['Grain_Confidence'] = np.round(1.0 - df_safe['P_Anomaly'], 4)
+    df_safe['Grain_Confidence'] = grain_confidence_array[safe_grain_mask]
     df_safe = df_safe.drop(columns=['P_Anomaly']).sort_values(by='Grain_Confidence', ascending=False) # 置信度降序
 
     # [靶点池] 记录异常置信度
     df_anomaly = df_all[anomaly_mask].copy()
     df_anomaly = df_anomaly.rename(columns={'P_Anomaly': 'Anomaly_Confidence'}).sort_values(by='Anomaly_Confidence', ascending=False)
+    physical_rows = df_anomaly['Routing_Reason'].astype(str).str.contains('physical', na=False)
+    df_anomaly.loc[physical_rows, 'Anomaly_Confidence'] = np.maximum(
+        df_anomaly.loc[physical_rows, 'Anomaly_Confidence'],
+        physical_veto_confidence
+    )
+    df_anomaly = df_anomaly.sort_values(by='Anomaly_Confidence', ascending=False)
+    logging.info("Routing breakdown: %s", df_all['Routing_Reason'].value_counts().to_dict())
 
     df_safe.to_csv(SAFE_CSV, index=False)
     df_anomaly.to_csv(ANOMALY_CSV, index=False)

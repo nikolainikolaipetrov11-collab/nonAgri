@@ -1,3 +1,4 @@
+#配置统一
 [paths]
 date_raw_dir = "date/raw"
 date_process_dir = "date/process"
@@ -37,6 +38,14 @@ min_clusters = 3
 max_clusters = 8
 ndvi_idx = 0
 glcm_idx = 43
+
+[routing]
+safe_grain_confidence_floor = 0.80
+physical_veto_confidence = 0.65
+abandoned_peak_ndvi_max = 0.55
+orchard_spring_ndvi_min = 0.18
+orchard_ndvi_std_max = 0.20
+orchard_glcm_global_ratio = 1.0
 
 [active_learning]
 batch_size = 20

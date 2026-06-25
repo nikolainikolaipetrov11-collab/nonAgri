@@ -1,0 +1,324 @@
+"""
+    用于计算光学指数
+    fenqutongji.py
+"""
+import os
+import glob
+import rasterio
+from rasterio.merge import merge
+from rasterio.windows import Window
+from rasterio.mask import mask
+import geopandas as gpd
+import pandas as pd
+import numpy as np
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import warnings
+import gc
+import logging
+from pathlib import Path
+warnings.filterwarnings("ignore")
+
+# ==========================================
+# 0. 基础路径与性能配置
+# ==========================================
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+
+warnings.filterwarnings("ignore")
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+PROCESS_DIR = str(BASE_DIR / 'date' / 'Process')
+OUT_DIR = str(BASE_DIR / 'date' / 'out_nonAgri')
+SHP_PATH = str(BASE_DIR / 'shp' / 'huocheng_dk_260605.shp')
+RAW_DIR = str(BASE_DIR / 'date' / 'raw')
+
+
+os.makedirs(PROCESS_DIR, exist_ok=True)
+os.makedirs(OUT_DIR, exist_ok=True)
+
+CHUNK_SIZE = 8192
+MAX_WORKERS = 4
+
+
+# ==========================================
+# 1. 核心解算与镶嵌逻辑
+# ==========================================
+def calculate_gf1_indices(input_dat, output_tif):
+    try:
+        with rasterio.open(input_dat) as src:
+            meta = src.meta.copy()
+            img_height, img_width = src.height, src.width
+            meta.update({"driver": "GTiff", "count": 8, "dtype": 'float32', "nodata": np.nan,
+                         "compress": "lzw", "tiled": True, "blockxsize": 256, "blockysize": 256, "BIGTIFF": "YES"})
+
+            with rasterio.open(output_tif, 'w', **meta) as dst:
+                for row_off in range(0, img_height, CHUNK_SIZE):
+                    for col_off in range(0, img_width, CHUNK_SIZE):
+                        curr_h = min(CHUNK_SIZE, img_height - row_off)
+                        curr_w = min(CHUNK_SIZE, img_width - col_off)
+                        window = Window(col_off, row_off, curr_w, curr_h)
+
+                        blue = src.read(1, window=window).astype(np.float32)
+                        green = src.read(2, window=window).astype(np.float32)
+                        red = src.read(3, window=window).astype(np.float32)
+                        nir = src.read(4, window=window).astype(np.float32)
+
+                        ndvi = np.where((nir + red) == 0, np.nan, (nir - red) / (nir + red))
+                        ndvi = np.where((ndvi >= -0.2) & (ndvi <= 1.0), ndvi, np.nan)
+
+                        evi_denom = (nir + 6.0 * red - 7.5 * blue + 1.0)
+                        evi = np.where(evi_denom == 0, np.nan, 2.5 * (nir - red) / evi_denom)
+                        evi = np.where((evi >= -0.2) & (evi <= 1.5), evi, np.nan)
+
+                        gcvi = np.where(green == 0, np.nan, (nir / green) - 1.0)
+                        gcvi = np.where((gcvi >= -1.0) & (gcvi <= 5.0), gcvi, np.nan)
+
+                        L = 0.5
+                        savi_denom = (nir + red + L)
+                        savi = np.where(savi_denom == 0, np.nan, ((nir - red) / savi_denom) * (1.0 + L))
+                        savi = np.where((savi >= -0.2) & (savi <= 1.0), savi, np.nan)
+
+                        blue_norm, green_norm, nir_norm = blue / 10000.0, green / 10000.0, nir / 10000.0
+
+                        isi = 0.8192 * blue_norm - 0.5735 * nir_norm + 0.0750
+                        isi = np.where((isi >= -1.0) & (isi <= 1.0), isi, np.nan)
+
+                        ubi = 1.34 * blue_norm - 2.24 * green_norm
+                        ubi = np.where((ubi >= -5.0) & (ubi <= 5.0), ubi, np.nan)
+
+                        ndwi = np.where((green + nir) == 0, np.nan, (green - nir) / (green + nir))
+                        ndwi = np.where((ndwi >= -1.0) & (ndwi <= 1.0), ndwi, np.nan)
+
+                        dst.write(ndvi, 1, window=window)
+                        dst.write(evi, 2, window=window)
+                        dst.write(gcvi, 3, window=window)
+                        dst.write(savi, 4, window=window)
+                        dst.write(isi, 5, window=window)
+                        dst.write(ubi, 6, window=window)
+                        dst.write(ndwi, 7, window=window)
+                        dst.write(nir, 8, window=window)
+
+                        del blue, green, red, nir, ndvi, evi, gcvi, savi, isi, ubi, ndwi
+        return output_tif, True, ""
+    except Exception as e:
+        return output_tif, False, str(e)
+
+
+def memory_safe_mosaic(src_paths, out_path, chunk_size=4096):
+    srcs = [rasterio.open(fp) for fp in src_paths]
+    lefts, bottoms = [src.bounds.left for src in srcs], [src.bounds.bottom for src in srcs]
+    rights, tops = [src.bounds.right for src in srcs], [src.bounds.top for src in srcs]
+
+    global_left, global_bottom = min(lefts), min(bottoms)
+    global_right, global_top = max(rights), max(tops)
+    res_x, res_y = srcs[0].res
+    width = int(np.ceil((global_right - global_left) / res_x))
+    height = int(np.ceil((global_top - global_bottom) / res_y))
+
+    global_transform = rasterio.transform.from_bounds(global_left, global_bottom, global_right, global_top, width,
+                                                      height)
+    meta = srcs[0].meta.copy()
+    meta.update({"height": height, "width": width, "transform": global_transform,
+                 "compress": "lzw", "tiled": True, "blockxsize": 256, "blockysize": 256, "BIGTIFF": "YES",
+                 "nodata": np.nan})
+
+    bands_count = srcs[0].count
+    logging.info(f"      [*] 正在开辟 {width} x {height} 巨幅基底...")
+
+    with rasterio.open(out_path, 'w', **meta) as dst:
+        for row_off in range(0, height, chunk_size):
+            for col_off in range(0, width, chunk_size):
+                curr_h, curr_w = min(chunk_size, height - row_off), min(chunk_size, width - col_off)
+                window = Window(col_off, row_off, curr_w, curr_h)
+                win_bounds = rasterio.windows.bounds(window, global_transform)
+
+                intersecting_srcs = [src for src in srcs if
+                                     not (src.bounds.right <= win_bounds[0] or src.bounds.left >= win_bounds[2] or
+                                          src.bounds.top <= win_bounds[1] or src.bounds.bottom >= win_bounds[3])]
+                if not intersecting_srcs: continue
+
+                chunk_mosaic, _ = merge(intersecting_srcs, bounds=win_bounds, res=(res_x, res_y), nodata=np.nan,
+                                        method='max')
+                write_h, write_w = min(curr_h, chunk_mosaic.shape[1]), min(curr_w, chunk_mosaic.shape[2])
+
+                block = np.full((bands_count, curr_h, curr_w), np.nan, dtype=np.float32)
+                block[:, :write_h, :write_w] = chunk_mosaic[:, :write_h, :write_w]
+                dst.write(block, window=window)
+                del chunk_mosaic, block
+    for src in srcs: src.close()
+
+
+# ==========================================
+# 2. 多进程内存切片提取特征
+# ==========================================
+def _extract_chunk(args):
+    gdf_chunk, tif_path, bands_names = args
+    results = []
+
+    with rasterio.Env(NUM_THREADS='all_cpus', GDAL_CACHEMAX=1024, GDAL_DISABLE_READDIR_ON_OPEN='EMPTY_DIR',
+                      CPL_DEBUG='OFF'):
+        with rasterio.open(tif_path) as src:
+            for _, row in gdf_chunk.iterrows():
+                geom, pid = row.geometry, row.parcel_id
+                res = {'parcel_id': pid}
+
+                try:
+                    out_image, _ = mask(src, [geom], crop=True, filled=False)
+                    for i, b_name in enumerate(bands_names):
+                        data = out_image[i]
+                        valid_data = data.compressed()
+                        valid_data = valid_data[~np.isnan(valid_data)]
+
+                        is_veg = b_name in ['NDVI', 'EVI', 'GCVI', 'SAVI']
+
+                        if valid_data.size < 3:
+                            res[f"{b_name}_mean"] = 0.0
+                            res[f"{b_name}_median"] = 0.0
+                            res[f"{b_name}_cv"] = 0.0
+                            if is_veg:
+                                res[f"{b_name}_q05"] = 0.0
+                                res[f"{b_name}_q10"] = 0.0
+                            else:
+                                res[f"{b_name}_q90"] = 0.0
+                                res[f"{b_name}_q95"] = 0.0
+                        else:
+                            mean_val = float(np.mean(valid_data))
+                            res[f"{b_name}_mean"] = mean_val
+                            res[f"{b_name}_median"] = float(np.median(valid_data))
+                            res[f"{b_name}_cv"] = float(np.std(valid_data) / mean_val) if abs(mean_val) > 1e-6 else 0.0
+
+
+                            if is_veg:
+                                # 植被抓取底端像元（捕捉破坏）
+                                res[f"{b_name}_q05"] = float(np.percentile(valid_data, 5))
+                                res[f"{b_name}_q10"] = float(np.percentile(valid_data, 10))
+                            else:
+                                # 建筑水体抓取顶端像元（捕捉增量）
+                                res[f"{b_name}_q90"] = float(np.percentile(valid_data, 90))
+                                res[f"{b_name}_q95"] = float(np.percentile(valid_data, 95))
+
+                    del out_image, valid_data
+                except Exception:
+                    # 全局兜底
+                    for b_name in bands_names:
+                        is_veg = b_name in ['NDVI', 'EVI', 'GCVI', 'SAVI']
+                        res[f"{b_name}_mean"] = 0.0
+                        res[f"{b_name}_median"] = 0.0
+                        res[f"{b_name}_cv"] = 0.0
+                        if is_veg:
+                            res[f"{b_name}_q05"] = 0.0
+                            res[f"{b_name}_q10"] = 0.0
+                        else:
+                            res[f"{b_name}_q90"] = 0.0
+                            res[f"{b_name}_q95"] = 0.0
+
+                results.append(res)
+
+    gc.collect()
+    return pd.DataFrame(results)
+
+
+def extract_optical_features(shp_path, tif_path, output_csv):
+    logging.info(f"      [*] 正在加载矢量并投递至 {MAX_WORKERS} 核计算引擎...")
+    gdf = gpd.read_file(shp_path)
+
+    with rasterio.open(tif_path) as src:
+        if gdf.crs != src.crs:
+            gdf = gdf.to_crs(src.crs)
+
+    bands = ['NDVI', 'EVI', 'GCVI', 'SAVI', 'ISI', 'UBI', 'NDWI']
+
+    num_chunks = MAX_WORKERS * 4
+    chunks = np.array_split(gdf, num_chunks)
+    tasks = [(chunk, tif_path, bands) for chunk in chunks]
+
+    df_list = []
+    with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        for i, df_res in enumerate(executor.map(_extract_chunk, tasks), 1):
+            df_list.append(df_res)
+            logging.info(f"        -> 批次 {i}/{num_chunks} 并发提取完成")
+
+    final_df = pd.concat(df_list, ignore_index=True)
+
+    # 动态组装预期列名
+    veg_bands = ['NDVI', 'EVI', 'GCVI', 'SAVI']
+    non_veg_bands = ['ISI', 'UBI', 'NDWI']
+    expected_cols = ['parcel_id']
+    for b in veg_bands:
+        expected_cols.extend([f"{b}_mean", f"{b}_median", f"{b}_cv", f"{b}_q05", f"{b}_q10"])
+    for b in non_veg_bands:
+        expected_cols.extend([f"{b}_mean", f"{b}_median", f"{b}_cv", f"{b}_q90", f"{b}_q95"])
+
+    final_df = final_df[expected_cols]
+    final_df.to_csv(output_csv, index=False, encoding='utf-8-sig')
+
+
+# ==========================================
+# 3. 主引擎
+# ==========================================
+def main_pipeline():
+    logging.info("=" * 65)
+    logging.info(f"启动流 B: 高分一号特征提取 (极值重构版) | 进程数: {MAX_WORKERS}")
+    logging.info("=" * 65)
+
+    month_folders = sorted([f for f in os.listdir(RAW_DIR) if os.path.isdir(os.path.join(RAW_DIR, f))])
+    for month_folder in month_folders:
+        logging.info(f"\n>>> 正在处理时序节点: {month_folder}")
+        folder_path = os.path.join(RAW_DIR, month_folder)
+
+        mosaic_tif_path = os.path.join(PROCESS_DIR, f"Optical_Mosaic_{month_folder}.tif")
+        out_csv_path = os.path.join(OUT_DIR, f"Optical_Features_{month_folder}.csv")
+
+        month_str = month_folder.replace('out_', '')
+        month_temp_dir = os.path.join(PROCESS_DIR, f"out_tif_{month_str}")
+
+        if os.path.exists(out_csv_path):
+            logging.info(f"  [跳过] 发现 {month_folder} 月特征 CSV 已存在，秒速越过该节点！")
+            continue
+
+        if os.path.exists(mosaic_tif_path):
+            logging.info(f"  [系统检测] 发现 {month_folder} 月巨型镶嵌矩阵已存在，直达特征并发提取！")
+        else:
+            dat_files = glob.glob(os.path.join(folder_path, '*.dat'))
+            if not dat_files: continue
+
+            os.makedirs(month_temp_dir, exist_ok=True)
+
+            month_tif_list = []
+            logging.info(f"  [1/3] 启动多进程解算，临时文件将收纳至: {month_temp_dir} ...")
+            futures_map = {}
+            with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                for dat in dat_files:
+                    basename = os.path.basename(dat).replace('.dat', '')
+                    out_tif = os.path.join(month_temp_dir, f"Temp_{basename}_indices.tif")
+                    future = executor.submit(calculate_gf1_indices, dat, out_tif)
+                    futures_map[future] = basename
+
+                for future in as_completed(futures_map):
+                    basename = futures_map[future]
+                    out_tif, success, error_msg = future.result()
+                    if success:
+                        month_tif_list.append(out_tif)
+                        logging.info(f"      [√] 解算完成: {basename[:25]}...")
+                    else:
+                        logging.error(f"      [X] 解算失败: {error_msg}")
+
+            logging.info(f"  [2/3] 启动内存安全型 MVC 镶嵌 (合并 {len(month_tif_list)} 景影像)...")
+            memory_safe_mosaic(month_tif_list, mosaic_tif_path, chunk_size=4096)
+            logging.info("      [√] 巨幅镶嵌完成！")
+
+            for tif in month_tif_list:
+                if os.path.exists(tif): os.remove(tif)
+
+            try:
+                os.rmdir(month_temp_dir)
+            except OSError:
+                pass
+
+        logging.info(f"  [3/3] 正在全速提取 7 大光学指数的极值局部特征矩阵...")
+        extract_optical_features(SHP_PATH, mosaic_tif_path, out_csv_path)
+        logging.info(f"  [√] {month_folder} 节点极值特征矩阵全线提存！")
+
+
+if __name__ == "__main__":
+    main_pipeline()

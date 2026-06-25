@@ -1,0 +1,59 @@
+# Python cache and local environments
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# IDE and OS metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Project data, generated features, and remote sensing intermediates
+date/
+*.dat
+*.hdr
+*.tif
+*.tiff
+*.aux.xml
+*.ovr
+*.enp
+
+# GIS datasets and generated layers
+shp/
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.sbn
+*.sbx
+*.qtr
+*.xml
+*.ebb
+*.ed1
+*.eq1
+
+# Model artifacts and generated reports
+*.pt
+*.pth
+*.npy
+*.npz
+*.pkl
+*.joblib
+model/checkpoints/
+model/evaluation_results/
+*.png
+*.jpg
+*.jpeg
+
+# Local inspection dumps
+str
+str_new
+shp_struct

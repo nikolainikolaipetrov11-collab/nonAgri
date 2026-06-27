@@ -35,6 +35,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
 CHUNK_SIZE = CONFIG.get("processing", "chunk_size")
 MAX_WORKERS = CONFIG.get("processing", "max_workers")
 MOSAIC_CHUNK_SIZE = CONFIG.get("processing", "mosaic_chunk_size")
+REFLECTANCE_SCALE = 10000.0
 
 
 # ==========================================
@@ -55,27 +56,34 @@ def calculate_gf1_indices(input_dat, output_tif):
                         curr_w = min(CHUNK_SIZE, img_width - col_off)
                         window = Window(col_off, row_off, curr_w, curr_h)
 
-                        blue = src.read(1, window=window).astype(np.float32)
-                        green = src.read(2, window=window).astype(np.float32)
-                        red = src.read(3, window=window).astype(np.float32)
-                        nir = src.read(4, window=window).astype(np.float32)
+                        # 原始影像是 uint16，nodata=0，像元值约为真实反射率 * 10000。
+                        # masked=True 会先把 nodata 排除，filled(np.nan) 让后续统计能识别缺失值。
+                        blue = src.read(1, window=window, masked=True).astype(np.float32).filled(np.nan)
+                        green = src.read(2, window=window, masked=True).astype(np.float32).filled(np.nan)
+                        red = src.read(3, window=window, masked=True).astype(np.float32).filled(np.nan)
+                        nir = src.read(4, window=window, masked=True).astype(np.float32).filled(np.nan)
 
-                        ndvi = np.where((nir + red) == 0, np.nan, (nir - red) / (nir + red))
+                        blue_norm = blue / REFLECTANCE_SCALE
+                        green_norm = green / REFLECTANCE_SCALE
+                        red_norm = red / REFLECTANCE_SCALE
+                        nir_norm = nir / REFLECTANCE_SCALE
+
+                        ndvi = np.where((nir_norm + red_norm) == 0, np.nan,
+                                        (nir_norm - red_norm) / (nir_norm + red_norm))
                         ndvi = np.where((ndvi >= -0.2) & (ndvi <= 1.0), ndvi, np.nan)
 
-                        evi_denom = (nir + 6.0 * red - 7.5 * blue + 1.0)
-                        evi = np.where(evi_denom == 0, np.nan, 2.5 * (nir - red) / evi_denom)
+                        evi_denom = (nir_norm + 6.0 * red_norm - 7.5 * blue_norm + 1.0)
+                        evi = np.where(evi_denom == 0, np.nan, 2.5 * (nir_norm - red_norm) / evi_denom)
                         evi = np.where((evi >= -0.2) & (evi <= 1.5), evi, np.nan)
 
-                        gcvi = np.where(green == 0, np.nan, (nir / green) - 1.0)
+                        gcvi = np.where(green_norm == 0, np.nan, (nir_norm / green_norm) - 1.0)
                         gcvi = np.where((gcvi >= -1.0) & (gcvi <= 5.0), gcvi, np.nan)
 
                         L = 0.5
-                        savi_denom = (nir + red + L)
-                        savi = np.where(savi_denom == 0, np.nan, ((nir - red) / savi_denom) * (1.0 + L))
+                        savi_denom = (nir_norm + red_norm + L)
+                        savi = np.where(savi_denom == 0, np.nan,
+                                        ((nir_norm - red_norm) / savi_denom) * (1.0 + L))
                         savi = np.where((savi >= -0.2) & (savi <= 1.0), savi, np.nan)
-
-                        blue_norm, green_norm, nir_norm = blue / 10000.0, green / 10000.0, nir / 10000.0
 
                         isi = 0.8192 * blue_norm - 0.5735 * nir_norm + 0.0750
                         isi = np.where((isi >= -1.0) & (isi <= 1.0), isi, np.nan)
@@ -83,7 +91,8 @@ def calculate_gf1_indices(input_dat, output_tif):
                         ubi = 1.34 * blue_norm - 2.24 * green_norm
                         ubi = np.where((ubi >= -5.0) & (ubi <= 5.0), ubi, np.nan)
 
-                        ndwi = np.where((green + nir) == 0, np.nan, (green - nir) / (green + nir))
+                        ndwi = np.where((green_norm + nir_norm) == 0, np.nan,
+                                        (green_norm - nir_norm) / (green_norm + nir_norm))
                         ndwi = np.where((ndwi >= -1.0) & (ndwi <= 1.0), ndwi, np.nan)
 
                         dst.write(ndvi, 1, window=window)
@@ -95,7 +104,8 @@ def calculate_gf1_indices(input_dat, output_tif):
                         dst.write(ndwi, 7, window=window)
                         dst.write(nir, 8, window=window)
 
-                        del blue, green, red, nir, ndvi, evi, gcvi, savi, isi, ubi, ndwi
+                        del blue, green, red, nir, blue_norm, green_norm, red_norm, nir_norm
+                        del ndvi, evi, gcvi, savi, isi, ubi, ndwi
         return output_tif, True, ""
     except Exception as e:
         return output_tif, False, str(e)
@@ -165,15 +175,20 @@ def _extract_chunk(args):
                         data = out_image[i]
                         valid_data = data.compressed()
                         valid_data = valid_data[~np.isnan(valid_data)]
+                        total_count = int(data.count()) if hasattr(data, "count") else int(data.size)
+                        valid_count = int(valid_data.size)
+                        valid_ratio = valid_count / total_count if total_count > 0 else 0.0
+                        res[f"{b_name}_valid_count"] = valid_count
+                        res[f"{b_name}_valid_ratio"] = float(valid_ratio)
 
                         if valid_data.size < 3:
                             for stat in ['mean', 'median', 'cv', 'skew', 'kurt', 'q25', 'q75']:
-                                res[f"{b_name}_{stat}"] = 0.0
+                                res[f"{b_name}_{stat}"] = np.nan
                         else:
                             mean_val = float(np.mean(valid_data))
                             res[f"{b_name}_mean"] = mean_val
                             res[f"{b_name}_median"] = float(np.median(valid_data))
-                            res[f"{b_name}_cv"] = float(np.std(valid_data) / mean_val) if abs(mean_val) > 1e-6 else 0.0
+                            res[f"{b_name}_cv"] = float(np.std(valid_data) / abs(mean_val)) if abs(mean_val) > 1e-6 else 0.0
                             res[f"{b_name}_skew"] = float(np.nan_to_num(skew(valid_data)))
                             res[f"{b_name}_kurt"] = float(np.nan_to_num(kurtosis(valid_data)))
                             res[f"{b_name}_q25"] = float(np.percentile(valid_data, 25))
@@ -182,8 +197,10 @@ def _extract_chunk(args):
                     del out_image, valid_data
                 except Exception:
                     for b_name in bands_names:
+                        res[f"{b_name}_valid_count"] = 0
+                        res[f"{b_name}_valid_ratio"] = 0.0
                         for stat in ['mean', 'median', 'cv', 'skew', 'kurt', 'q25', 'q75']:
-                            res[f"{b_name}_{stat}"] = 0.0
+                            res[f"{b_name}_{stat}"] = np.nan
 
                 results.append(res)
 
@@ -212,8 +229,8 @@ def extract_optical_features(shp_path, tif_path, output_csv):
             print(f"        -> 批次 {i}/{num_chunks} 并发提取完成")
 
     final_df = pd.concat(df_list, ignore_index=True)
-    final_df = final_df[
-        ['parcel_id'] + [f"{b}_{s}" for b in bands for s in ['mean', 'median', 'cv', 'skew', 'kurt', 'q25', 'q75']]]
+    stats = ['mean', 'median', 'cv', 'skew', 'kurt', 'q25', 'q75', 'valid_count', 'valid_ratio']
+    final_df = final_df[['parcel_id'] + [f"{b}_{s}" for b in bands for s in stats]]
     final_df.to_csv(output_csv, index=False, encoding='utf-8-sig')
 
 
@@ -238,9 +255,11 @@ def main_pipeline():
         month_str = month_folder.replace('out_', '')
         month_temp_dir = os.path.join(PROCESS_DIR, f"out_tif_{month_str}")
 
-        if os.path.exists(out_csv_path):
+        if os.path.exists(out_csv_path) and os.path.getsize(out_csv_path) > 0:
             print(f"  [跳过] 发现 {month_folder} 月特征 CSV 已存在，秒速越过该节点！")
             continue
+        if os.path.exists(out_csv_path):
+            print(f"  [重算] 发现 {month_folder} 月特征 CSV 为空文件，将重新生成。")
 
         if os.path.exists(mosaic_tif_path):
             print(f"  [系统检测] 发现 {month_folder} 月巨型镶嵌矩阵已存在，直达特征并发提取！")

@@ -33,6 +33,21 @@ batch_size = 256
 texture_start_idx = 43
 texture_end_idx = 46
 
+[quality]
+# 自动质量分最低保留值，避免某个月份被完全忽略导致分母为 0。
+min_quality = 0.05
+
+[quality.month_weights]
+# 人工月份质量权重：1.0 表示质量正常，越低表示该月影像整体可信度越低。
+# 如果后续发现某个月云、雾、缺景严重，可以只调这里，不需要改代码。
+"4" = 1.0
+"5" = 1.0
+"6" = 1.0
+"7" = 1.0
+"8" = 1.0
+"9" = 1.0
+"10" = 1.0
+
 [gmm]
 min_clusters = 3
 max_clusters = 8

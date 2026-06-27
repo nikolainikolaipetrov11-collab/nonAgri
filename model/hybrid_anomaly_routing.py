@@ -179,14 +179,17 @@ def run_hybrid_pipeline():
 
     all_parcel_ids = []
     all_mse_errors = []
+    all_mean_quality = []
+    all_low_quality_months = []
 
     TEXTURE_START_IDX = CONFIG.get("inference", "texture_start_idx")
     TEXTURE_END_IDX = CONFIG.get("inference", "texture_end_idx")
 
     logging.info("⚖️ 正在进行全域扫描，计算纯正的 MAE 重构误差 (MSE)...")
     with torch.no_grad():
-        for _, orig_tensor, _, parcel_ids, cluster_ids in tqdm(full_loader, desc="计算 MSE"):
+        for _, orig_tensor, _, quality_tensor, parcel_ids, cluster_ids in tqdm(full_loader, desc="计算 MSE"):
             inputs = orig_tensor.to(device)
+            quality_weights = quality_tensor.to(device)
             c_ids = cluster_ids.to(device)
 
             # 手术刀屏蔽纹理
@@ -196,9 +199,15 @@ def run_hybrid_pipeline():
             features = encoder(inputs_pure)
             reconstructed = decoder(features, c_ids)
 
-            mse = ((reconstructed - inputs) ** 2).mean(dim=(1, 2))
+            quality_3d = quality_weights.unsqueeze(-1)
+            squared_error = (reconstructed - inputs) ** 2
+            mse = (squared_error * quality_3d).sum(dim=(1, 2)) / (
+                quality_3d.sum(dim=(1, 2)) * squared_error.shape[2] + 1e-8
+            )
 
             all_mse_errors.extend(mse.cpu().numpy())
+            all_mean_quality.extend(quality_weights.mean(dim=1).cpu().numpy())
+            all_low_quality_months.extend((quality_weights < 0.5).sum(dim=1).cpu().numpy())
             all_parcel_ids.extend(parcel_ids)
 
     mse_array = np.array(all_mse_errors)
@@ -245,6 +254,8 @@ def run_hybrid_pipeline():
     df_all = pd.DataFrame({
         'parcel_id': all_parcel_ids,
         'MSE_Score': np.round(mse_array, 4),
+        'Mean_Quality': np.round(np.array(all_mean_quality), 4),
+        'Low_Quality_Months': np.array(all_low_quality_months, dtype=int),
         'P_Anomaly': p_anomaly_array,
         'Routing_Reason': routing_reason
     })

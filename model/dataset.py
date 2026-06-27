@@ -29,6 +29,7 @@ class PhenologyMAEDataset(Dataset):
         # 1. 统一路径路由
         root_dir = Path(data_root)
         self.tensor_path = root_dir / "Dynamic_TimeSeries_Tensor.npy"
+        self.quality_path = root_dir / "Dynamic_TimeSeries_Quality.npy"
         self.wide_table_path = root_dir / "Dynamic_TimeSeries_WideTable.csv"
         self.scaler_path = root_dir / "feature_scaler.pt"
 
@@ -42,12 +43,27 @@ class PhenologyMAEDataset(Dataset):
             # 保留原始物理值备份，防止下游阶段二取不到真值！
             self._raw_physical_tensor = np.load(self.tensor_path)
             full_wide_table = pd.read_csv(self.wide_table_path)
+            if self.quality_path.exists():
+                self.quality_weights = np.load(self.quality_path).astype(np.float32)
+            else:
+                logging.warning("⚠️ 未找到 Dynamic_TimeSeries_Quality.npy，默认所有月份质量为 1.0。")
+                self.quality_weights = np.ones(self._raw_physical_tensor.shape[:2], dtype=np.float32)
         except Exception as e:
             raise RuntimeError(f"💥 数据加载崩溃，底层报错: {e}")
 
         if len(self._raw_physical_tensor) != len(full_wide_table):
             raise ValueError(
                 f"⚖️ 数据不对齐: 张量有 {len(self._raw_physical_tensor)} 样本，宽表有 {len(full_wide_table)} 行！")
+
+        expected_quality_shape = self._raw_physical_tensor.shape[:2]
+        if self.quality_weights.shape != expected_quality_shape:
+            raise ValueError(
+                f"⚖️ 质量矩阵形状不对: 应为 {expected_quality_shape}，实际为 {self.quality_weights.shape}。")
+        self.quality_weights = np.clip(
+            np.nan_to_num(self.quality_weights, nan=1.0, posinf=1.0, neginf=0.05),
+            0.05,
+            1.0,
+        )
 
         if np.isnan(self._raw_physical_tensor).any() or np.isinf(self._raw_physical_tensor).any():
             logging.warning("⚠️ 检测到内存张量中包含异常值！已自动执行安全清洗并置零。")
@@ -106,11 +122,21 @@ class PhenologyMAEDataset(Dataset):
             return self._raw_physical_tensor[indices]
         return self._raw_physical_tensor
 
+    def get_quality_weights(self, indices: list = None) -> np.ndarray:
+        """
+        返回每个地块、每个月份的数据质量权重。
+        后续训练和推理可用它降低低质量月份对结果的影响。
+        """
+        if indices is not None:
+            return self.quality_weights[indices]
+        return self.quality_weights
+
     def __len__(self):
         return self.num_samples
 
     def __getitem__(self, idx):
         original_tensor = torch.tensor(self.tensor_data[idx], dtype=torch.float32)
+        quality_tensor = torch.tensor(self.quality_weights[idx], dtype=torch.float32)
         parcel_id = self.meta_data.loc[idx, self.wide_id_col]
         cluster_id = int(self.meta_data.loc[idx, 'Cluster_ID']) if 'Cluster_ID' in self.meta_data.columns else 0
 
@@ -124,4 +150,4 @@ class PhenologyMAEDataset(Dataset):
             mask[masked_indices, :] = 1.0
             masked_tensor[masked_indices, :] = 0.0  # Z-score 后的 0 就是均值，完美掩码
 
-        return masked_tensor, original_tensor, mask, parcel_id, cluster_id
+        return masked_tensor, original_tensor, mask, quality_tensor, parcel_id, cluster_id

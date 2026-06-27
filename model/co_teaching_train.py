@@ -41,13 +41,16 @@ class CoTeachingConfig:
 # ==========================================
 # 抗噪交叉教学损失函数
 # ==========================================
-def loss_coteaching(pred_A, pred_B, targets, masks, forget_rate):
+def loss_coteaching(pred_A, pred_B, targets, masks, quality_weights, forget_rate):
     """计算重构误差，独立排序并执行交叉更新。"""
-    mse_A = ((pred_A - targets) ** 2) * masks
-    mse_B = ((pred_B - targets) ** 2) * masks
+    # quality_weights 的形状是 (batch, time)，扩展到特征维后参与损失计算。
+    # 低质量月份仍会参与训练，但贡献会变小，避免坏影像主导模型学习。
+    weighted_masks = masks * quality_weights.unsqueeze(-1)
+    mse_A = ((pred_A - targets) ** 2) * weighted_masks
+    mse_B = ((pred_B - targets) ** 2) * weighted_masks
 
-    loss_A = mse_A.sum(dim=(1, 2)) / (masks.sum(dim=(1, 2)) + 1e-8)
-    loss_B = mse_B.sum(dim=(1, 2)) / (masks.sum(dim=(1, 2)) + 1e-8)
+    loss_A = mse_A.sum(dim=(1, 2)) / (weighted_masks.sum(dim=(1, 2)) + 1e-8)
+    loss_B = mse_B.sum(dim=(1, 2)) / (weighted_masks.sum(dim=(1, 2)) + 1e-8)
 
     # 必须使用 detach() 斩断计算图，防止显存泄漏与图纠缠
     ind_A = torch.argsort(loss_A.detach())
@@ -76,7 +79,9 @@ def run_coteaching_pipeline():
 
     # 1. 加载数据
     logging.info("正在加载含噪数据集并提取 K-Means 伪主粮 (包含干扰项)...")
-    full_dataset = PhenologyMAEDataset(data_root=str(cfg.DATA_ROOT), mode='inference', mask_ratio=cfg.MASK_RATIO)
+    # 指数公式或缺失值策略调整后，特征分布会变化。
+    # 训练阶段必须重新计算并保存 feature_scaler.pt，避免继续使用旧归一化参数。
+    full_dataset = PhenologyMAEDataset(data_root=str(cfg.DATA_ROOT), mode='train', mask_ratio=cfg.MASK_RATIO)
     all_labeled_df = pd.read_csv(cfg.DATA_ROOT / "sample_select_ms" / "All_Labeled_Parcels.csv")
 
     df_id_col = all_labeled_df.columns[0]
@@ -118,8 +123,9 @@ def run_coteaching_pipeline():
         total_loss_A, total_loss_B = 0.0, 0.0
 
         pbar = tqdm(train_loader, desc=f"Epoch [{epoch + 1}/{cfg.NUM_EPOCHS}] (Drop {current_forget_rate * 100:.1f}%)")
-        for masked_tensor, orig_tensor, mask_tensor, _, c_ids in pbar:
+        for masked_tensor, orig_tensor, mask_tensor, quality_tensor, _, c_ids in pbar:
             inputs, targets, masks = masked_tensor.to(cfg.DEVICE), orig_tensor.to(cfg.DEVICE), mask_tensor.to(cfg.DEVICE)
+            quality_weights = quality_tensor.to(cfg.DEVICE)
             c_ids = c_ids.to(cfg.DEVICE)
 
             opt_A.zero_grad()
@@ -128,7 +134,7 @@ def run_coteaching_pipeline():
             with torch.amp.autocast('cuda'):
                 pred_A = decoder_A(encoder_A(inputs), c_ids)
                 pred_B = decoder_B(encoder_B(inputs), c_ids)
-                loss_A, loss_B = loss_coteaching(pred_A, pred_B, targets, masks, current_forget_rate)
+                loss_A, loss_B = loss_coteaching(pred_A, pred_B, targets, masks, quality_weights, current_forget_rate)
 
             scaler_A.scale(loss_A).backward()
             scaler_A.step(opt_A)

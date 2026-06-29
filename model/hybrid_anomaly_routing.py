@@ -149,7 +149,7 @@ def build_physical_veto_flags(raw_physical_matrix):
 
 def run_hybrid_pipeline():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logging.info(f"🚀 启动异常初筛路由引擎 (可信AI版)，计算设备: {device}")
+    logging.info(f"🚀 启动异常初筛路由引擎 ，计算设备: {device}")
 
     DATA_ROOT = CONFIG.date_out_dir
     CO_TEACHING_CKPT = CONFIG.checkpoint_dir / "co_teaching_encoder_best.pth"

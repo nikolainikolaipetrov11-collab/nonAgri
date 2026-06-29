@@ -85,7 +85,7 @@ def run_coteaching_pipeline():
     all_labeled_df = pd.read_csv(cfg.DATA_ROOT / "sample_select_ms" / "All_Labeled_Parcels.csv")
 
     df_id_col = all_labeled_df.columns[0]
-    pseudo_crops = all_labeled_df[all_labeled_df['Cluster_ID'].isin([0, 2])]
+    pseudo_crops = all_labeled_df[all_labeled_df['Cluster_ID'].isin([0, 3])]
     valid_ids = set(pseudo_crops[df_id_col].astype(str).str.replace(r'\.0$', '', regex=True).str.strip())
 
     valid_indices = [idx for idx, pid in enumerate(full_dataset.meta_data[full_dataset.wide_id_col])
